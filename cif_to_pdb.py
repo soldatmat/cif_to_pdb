@@ -14,50 +14,69 @@
 #
 # python script_name.py path_to_CIFS_files_FOLDER/
 #
-# 2023 Jean-Marie Bourhis 
+# original script: 2023 Jean-Marie Bourhis 
+#  adapted script: 2026 Matouš Soldát
 
+import argparse
 import os
 import pdb
 import subprocess
 import sys
 from tqdm import tqdm
 
-# Define the input and output directories
-output_pdb_directory = "output_pdbs/"
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_cif", required=True, type=str)
+    parser.add_argument("--output_pdb", required=True, type=str)
+    args = parser.parse_args()
+    return args
 
-# Check if the command line arguments are provided correctly
-if len(sys.argv) < 2:
-    print("Please provide the necessary arguments: script_name.py Cifs_files-Folder/")
-    sys.exit(1)
-    
-# Path to the sequence 
-input_cif_directory = str(sys.argv[1])
 
-# Create output and temporary directories if they don't exist
-os.makedirs(output_pdb_directory, exist_ok=True)
-
-# Get a list of CIF files in the input directory and sort them
-cif_files = [f for f in os.listdir(input_cif_directory) if f.endswith(".cif")]
-cif_files.sort()  # Sort alphabetically
-
-# Wrap the loop with tqdm to add a progress bar
-for cif_file in tqdm(cif_files, desc="Converting files"):
-    cif_path = os.path.join(input_cif_directory, cif_file)
-    pdb_file = cif_file.replace(".cif", ".pdb")
-    pdb_path = os.path.join(output_pdb_directory, pdb_file)
-
+def main(args):
     # Convert CIF to PDB using Open Babel
-    obabel_command = ["obabel", cif_path, "-O", pdb_path]
+    obabel_command = ["obabel", args.input_cif, "-O", args.output_pdb]
     with open(os.devnull, 'w') as devnull:
         subprocess.run(obabel_command, stdout=devnull, stderr=devnull)
 
-      # Remove headers using awk
+    # Remove headers using awk
     awk_command = ["awk", '/^ATOM |^TER/']
-    with open(os.path.join(output_pdb_directory, pdb_file), "rb") as input_file:
+    with open(args.output_pdb, "rb") as input_file:
         awk_process = subprocess.run(awk_command, stdin=input_file, stdout=subprocess.PIPE, text=True)
         tmp2_content = awk_process.stdout
 
-    with open(os.path.join(output_pdb_directory, pdb_file), "w") as tmp2_file:
+    with open(args.output_pdb, "w") as tmp2_file:
         tmp2_file.write(tmp2_content)
 
-print("Conversion complete.")
+
+def convert_multiple():
+    # Define the input and output directories
+    output_pdb_directory = "output_pdbs/"
+
+    # Check if the command line arguments are provided correctly
+    if len(sys.argv) < 2:
+        print("Please provide the necessary arguments: script_name.py Cifs_files-Folder/")
+        sys.exit(1)
+        
+    # Path to the sequence 
+    input_cif_directory = str(sys.argv[1])
+
+    # Create output and temporary directories if they don't exist
+    os.makedirs(output_pdb_directory, exist_ok=True)
+
+    # Get a list of CIF files in the input directory and sort them
+    cif_files = [f for f in os.listdir(input_cif_directory) if f.endswith(".cif")]
+    cif_files.sort()  # Sort alphabetically
+
+    # Wrap the loop with tqdm to add a progress bar
+    for cif_file in tqdm(cif_files, desc="Converting files"):
+        cif_path = os.path.join(input_cif_directory, cif_file)
+        pdb_file = cif_file.replace(".cif", ".pdb")
+        pdb_path = os.path.join(output_pdb_directory, pdb_file)
+        main(argparse.Namespace(input_cif=cif_path, output_pdb=pdb_path))
+
+    print("Conversion complete.")
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    main(args)
