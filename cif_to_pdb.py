@@ -1,35 +1,36 @@
-# original script: 2023 Jean-Marie Bourhis 
+# original script: 2023 Jean-Marie Bourhis
 #  adapted script: 2026 Matouš Soldát
 
 import argparse
 import os
-import pdb
-import subprocess
 import sys
 from tqdm import tqdm
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input_cif", required=True, type=str)
-    parser.add_argument("--output_pdb", required=True, type=str)
-    args = parser.parse_args()
-    return args
+from Bio.PDB import PDBIO, Select
+from Bio.PDB.MMCIFParser import MMCIFParser
+
+
+class _StandardResidueSelect(Select):
+    """Keep only standard (non-hetero, non-water) residues, i.e. ATOM records.
+    Matches the original obabel+awk behaviour that filtered to `^ATOM` lines and
+    dropped ligands/ions/water."""
+
+    def accept_residue(self, residue):
+        return residue.id[0] == " "
 
 
 def main(args):
-    # Convert CIF to PDB using Open Babel
-    obabel_command = ["obabel", args.input_cif, "-O", args.output_pdb]
-    with open(os.devnull, 'w') as devnull:
-        subprocess.run(obabel_command, stdout=devnull, stderr=devnull)
-
-    # Remove headers using awk
-    awk_command = ["awk", '/^ATOM |^TER/']
-    with open(args.output_pdb, "rb") as input_file:
-        awk_process = subprocess.run(awk_command, stdin=input_file, stdout=subprocess.PIPE, text=True)
-        tmp2_content = awk_process.stdout
-
-    with open(args.output_pdb, "w") as tmp2_file:
-        tmp2_file.write(tmp2_content)
+    # Convert CIF -> PDB with Biopython (NOT Open Babel). Open Babel did not carry
+    # the mmCIF B_iso_or_equiv column into the PDB B-factor (wrote 0.00), which
+    # discarded AlphaFold pLDDT. MMCIFParser reads B_iso into atom.bfactor and PDBIO
+    # writes it back to the B-factor column, so the extracted PDB keeps per-residue
+    # pLDDT. Only standard residues are written (protein/nucleic ATOM records),
+    # preserving the previous ATOM-only output shape.
+    parser = MMCIFParser(QUIET=True)
+    structure = parser.get_structure("s", args.input_cif)
+    io = PDBIO()
+    io.set_structure(structure)
+    io.save(args.output_pdb, _StandardResidueSelect())
 
 
 def convert_multiple():
