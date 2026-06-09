@@ -4,33 +4,66 @@
 import argparse
 import os
 import sys
+
 from tqdm import tqdm
 
 from Bio.PDB import PDBIO, Select
 from Bio.PDB.MMCIFParser import MMCIFParser
 
 
-class _StandardResidueSelect(Select):
-    """Keep only standard (non-hetero, non-water) residues, i.e. ATOM records.
-    Matches the original obabel+awk behaviour that filtered to `^ATOM` lines and
-    dropped ligands/ions/water."""
+class _ResidueSelect(Select):
+    """Select which residues to write.
+
+    - standard (protein/nucleic) residues -> ATOM records (always kept)
+    - ligands / ions / cofactors          -> HETATM records (kept when keep_hetero)
+    - water                               -> always dropped
+
+    Biopython's hetero flag is residue.id[0]: " " for standard residues, "W" for
+    water, and "H_<resname>" for other hetero groups (ligands, ions, cofactors).
+    """
+
+    def __init__(self, keep_hetero: bool = True):
+        self.keep_hetero = keep_hetero
 
     def accept_residue(self, residue):
-        return residue.id[0] == " "
+        hetflag = residue.id[0]
+        if hetflag == " ":
+            return True            # protein / nucleic -> ATOM
+        if hetflag == "W":
+            return False           # water -> drop
+        return self.keep_hetero    # ligand / ion / cofactor -> HETATM
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Convert an mmCIF to PDB (Biopython), preserving the B-factor "
+        "(AlphaFold pLDDT). Ligands/ions/cofactors are kept as HETATM by default."
+    )
+    parser.add_argument("--input_cif", required=True, type=str)
+    parser.add_argument("--output_pdb", required=True, type=str)
+    parser.add_argument(
+        "--no_hetero", dest="keep_hetero", action="store_false",
+        help="Write protein/nucleic atoms only; drop ligands/ions/cofactors.",
+    )
+    parser.set_defaults(keep_hetero=True)
+    return parser.parse_args()
 
 
 def main(args):
     # Convert CIF -> PDB with Biopython (NOT Open Babel). Open Babel did not carry
-    # the mmCIF B_iso_or_equiv column into the PDB B-factor (wrote 0.00), which
-    # discarded AlphaFold pLDDT. MMCIFParser reads B_iso into atom.bfactor and PDBIO
-    # writes it back to the B-factor column, so the extracted PDB keeps per-residue
-    # pLDDT. Only standard residues are written (protein/nucleic ATOM records),
-    # preserving the previous ATOM-only output shape.
+    # the mmCIF B_iso_or_equiv column into the PDB B-factor (wrote 0.00), discarding
+    # AlphaFold pLDDT, and it emitted ligands as (mislabeled) ATOM records. Biopython
+    # MMCIFParser reads B_iso into atom.bfactor and PDBIO writes it back as the
+    # B-factor (pLDDT 0-100), and writes ligands/ions correctly as HETATM. By default
+    # the full complex is kept (protein ATOM + ligand/ion/cofactor HETATM); callers
+    # that want a protein-only structure pass keep_hetero=False (CLI: --no_hetero).
+    # Water is always dropped.
+    keep_hetero = getattr(args, "keep_hetero", True)
     parser = MMCIFParser(QUIET=True)
     structure = parser.get_structure("s", args.input_cif)
     io = PDBIO()
     io.set_structure(structure)
-    io.save(args.output_pdb, _StandardResidueSelect())
+    io.save(args.output_pdb, _ResidueSelect(keep_hetero=keep_hetero))
 
 
 def convert_multiple():
@@ -41,8 +74,8 @@ def convert_multiple():
     if len(sys.argv) < 2:
         print("Please provide the necessary arguments: script_name.py Cifs_files-Folder/")
         sys.exit(1)
-        
-    # Path to the sequence 
+
+    # Path to the sequence
     input_cif_directory = str(sys.argv[1])
 
     # Create output and temporary directories if they don't exist
@@ -63,5 +96,4 @@ def convert_multiple():
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main(parse_args())
